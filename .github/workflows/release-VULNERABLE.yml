@@ -1,0 +1,69 @@
+# Reconstructed from the 7nohe/openapi-react-query-codegen release.yml as it
+# existed before fix commit 8330895b4df0 (2026-08-28T22:50:03Z).
+# Reconstruction based on public writeups (StepSecurity, Socket, SafeDep, JFrog).
+# DO NOT SHIP. This file exists to reproduce the trigger path in a lab repo.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # FLAW 1 -- comment-triggered release. Fires on ANY comment on ANY issue/PR.
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+  # FLAW 3 -- OIDC minting rights held by a job that runs untrusted code.
+  id-token: write
+  issues: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    # FLAW 1 (cont.) -- gate is on comment TEXT only.
+    # No github.event.comment.author_association check.
+    # Any GitHub account can satisfy this.
+    if: >-
+      ${{ github.event_name == 'push' ||
+          (github.event.issue.pull_request &&
+           github.event.comment.body == 'npm publish') }}
+
+    steps:
+      # Note for BAF: this checkout resolves to the UPSTREAM origin
+      # (github.com/7nohe/openapi-react-query-codegen), NOT the fork URL.
+      # GitHub mirrors fork PR heads into the upstream refs namespace.
+      # A source-repo allowlist keyed on remote URL will NOT see this as foreign.
+      # The foreign thing is the REF (pull/<n>/head), not the repo.
+      - uses: actions/checkout@v4
+
+      # FLAW 2 -- checks out attacker-controlled fork code into a privileged job.
+      - name: Checkout PR
+        if: ${{ github.event_name == 'issue_comment' }}
+        run: |
+          git fetch origin pull/${{ github.event.issue.number }}/head:pr-find-commit
+          git checkout pr-find-commit
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      # DETONATION POINT.
+      # pnpm install runs the fork's preinstall hook AND lets node-gyp
+      # evaluate the fork's binding.gyp. Both execute before any human
+      # sees the code. Job already holds id-token: write.
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Set prerelease package version
+        if: ${{ github.event_name == 'issue_comment' }}
+        run: npm version --no-git-tag-version 0.0.0-$(git rev-parse HEAD)
+
+      - name: Publish prerelease
+        if: ${{ github.event_name == 'issue_comment' }}
+        run: pnpm publish --no-git-checks --tag canary
