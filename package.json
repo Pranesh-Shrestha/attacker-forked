@@ -1,0 +1,9 @@
+{
+  "name": "baf-trinitite-repro-fork",
+  "version": "0.0.0",
+  "description": "Benign fork payload standing in for the attacker PR. Reproduces trigger paths only.",
+  "private": true,
+  "scripts": {
+    "preinstall": "node canary.js preinstall-hook"
+  }
+}
